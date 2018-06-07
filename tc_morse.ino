@@ -4,10 +4,14 @@
  */
 
 #include <U8g2lib.h>
+#include <EEPROM.h>
 
-#define DOWNPIN 0
-#define SELPIN  4
-#define UPPIN   5
+/* pin defines */
+#define DOWNPIN   0
+#define SELPIN    4
+#define UPPIN     5
+#define AUDIOPIN  12
+#define LEDPIN    13
 
 // first byte is number of notes
 // second two bytes are binary representation of morse code symbol
@@ -18,38 +22,70 @@ uint16_t morse[36] = {0x201,0x408,0x40a,0x304,0x100,0x402,0x306,0x400,0x200,0x40
                       0x301,0x401,0x303,0x409,0x40b,0x40c,                          // U - Z
                       0x50f,0x507,0x503,0x501,0x500,0x510,0x518,0x51c,0x51e,0x51f}; // 0 - 9
 
-// 0: basic select
-// 1: edit string
-uint8_t menuMode = 0;
-
+// main menu
 char *menu[] = {"play", "change", "load", "save"};
-uint8_t menuSize = sizeof(menu) / sizeof(menu[0]);
-int menuSel = 0;
 
+// loaded menu
+#define LOADSIZE 3
+char *loadedStrs[LOADSIZE + 1]; // extra space for 'cancel' menu option
+
+// menu globals
 char** pMenu;
 void (*pHandler)(int);
+uint8_t menuSize = 4;
+int menuSel = 0;
 
+// morse code string globals
 #define MAXSTRLEN 15 // max of 15 to fit on screen
-char morseStr[MAXSTRLEN+1] = "thotcon";
+char morseStr[MAXSTRLEN+1];
 int strSel = -1; // start with character highlight hidden
 
 // display instance
 U8G2_UC1701_EA_DOGS102_F_4W_SW_SPI u8g2(U8G2_R0, /* clock=*/ 14, /* data=*/ 13, /* cs=*/ 15, /* dc=*/ 12);
 
 void setup() {
-  // put your setup code here, to run once:
+  // initialize screen
   u8g2.begin();
   
-  Serial.begin(9600);
+  // initialize EEPROM
+  EEPROM.begin(512);
   
   pinMode(UPPIN, INPUT_PULLUP);
   pinMode(SELPIN, INPUT_PULLUP);
   pinMode(DOWNPIN, INPUT_PULLUP);
-  pinMode(12, OUTPUT);
-  pinMode(13, OUTPUT);
+  pinMode(AUDIOPIN, OUTPUT);
+  pinMode(LEDPIN, OUTPUT);
   
-  analogWrite(12, 0);
-  digitalWrite(13, HIGH);
+  analogWrite(AUDIOPIN, 0);
+  digitalWrite(LEDPIN, HIGH);
+
+  // allocate space for loading strings
+  for (int i=0; i<(LOADSIZE + 1); i++) {
+    char *temp = new char[MAXSTRLEN + 1];
+    loadedStrs[i] = temp;
+  }
+
+  // check if saved count is within bounds
+  // reset it if it's not
+  uint8_t loadCount = EEPROM.read(0); // address 0 keeps track of saved strings count
+  if (loadCount > LOADSIZE) {
+    loadCount = 0;
+    EEPROM.write(0, 0);
+  }
+
+  // check if any strings saved to EEPROM
+  // set default to first saved string
+  // or to default string if nothing saved
+  if (loadCount != 0) {
+    for (int i=0; i<=MAXSTRLEN; i++) {
+      morseStr[i] = EEPROM.read(i + 1);
+    }
+  } else {
+    char temp[16] = "thotcon";
+    for (int i=0; i<=MAXSTRLEN; i++) {
+      morseStr[i] = temp[i];
+    }
+  }
 
   pMenu = menu;
   pHandler = &mainHandler;
@@ -57,8 +93,8 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  if (!digitalRead(UPPIN)) {
+  // check for button events
+  if (!digitalRead(UPPIN)) { // move menu selector up
     menuSel++;
     if (menuSel > (menuSize - 1)) {
       menuSel = 0;
@@ -67,7 +103,7 @@ void loop() {
     delay(150); // debounce
   }
   
-  else if (!digitalRead(DOWNPIN)) {
+  else if (!digitalRead(DOWNPIN)) { // move menu selector down
     menuSel--;
     if (menuSel < 0) {
       menuSel = menuSize - 1;
@@ -76,7 +112,7 @@ void loop() {
     delay(150); // debounce
   }
   
-  else if (!digitalRead(SELPIN)) {
+  else if (!digitalRead(SELPIN)) { // report selection to menu handler
     pHandler(menuSel);
     delay(150); // debounce
   }
@@ -86,21 +122,21 @@ void loop() {
 
 /* play a short pulse */
 void morseShort() {
-  analogWrite(12,51);
-  digitalWrite(13, HIGH);
+  analogWrite(AUDIOPIN,51);
+  digitalWrite(LEDPIN, HIGH);
   delay(200);
-  digitalWrite(13, LOW);
-  analogWrite(12,0);
+  digitalWrite(LEDPIN, LOW);
+  analogWrite(AUDIOPIN,0);
   delay(50);
 }
 
 /* play a long pulse */
 void morseLong() {
-  analogWrite(12,51);
-  digitalWrite(13, HIGH);
+  analogWrite(AUDIOPIN,51);
+  digitalWrite(LEDPIN, HIGH);
   delay(500);
-  digitalWrite(13, LOW);
-  analogWrite(12,0);
+  digitalWrite(LEDPIN, LOW);
+  analogWrite(AUDIOPIN,0);
   delay(50);
 }
 
@@ -144,7 +180,6 @@ void string2Morse(char* str) {
   uint16_t strLen = strlen(str);
   for (int i=0; i<strLen; i++) {
     char c = str[i];
-    //Serial.println(c);
     if (c == ' ')
       delay(500); // pause between words
     else
@@ -207,6 +242,15 @@ void updateDisplay() {
   u8g2.sendBuffer(); // send buffer to screen
 }
 
+/* update menu actions */
+void updateMenu(char *newMenu[], void (*newMenuHandler)(int), uint8_t newMenuSize, uint8_t newMenuSel) {
+  pMenu = newMenu;
+  pHandler = newMenuHandler;
+  menuSize = newMenuSize;
+  menuSel = newMenuSel;
+  updateDisplay();
+}
+
 /*** Handler functions ***/
 
 /* handle main menu selections */
@@ -227,10 +271,14 @@ void mainHandler(int selection) {
       delay(150); // debounce
       break;
     case 2: // load string from eeprom
+      loadMenu();
+      delay(150); // debounce
       break;
     case 3: // save string to eeprom
+      saveMenu();
+      delay(150);
       break;
-    default:
+    default: // default case
       break;
   }
 }
@@ -239,7 +287,7 @@ void mainHandler(int selection) {
 void strEditor() {
   char currLetter = 0;
   while (1) {
-    if (!digitalRead(UPPIN)) {
+    if (!digitalRead(UPPIN)) { // move character selection forward or return to menu
       if (currLetter != 0) {
         strSel++;
         if (strSel > (MAXSTRLEN - 1)) {
@@ -259,7 +307,7 @@ void strEditor() {
       delay(150); // debounce
     } 
     
-    else if (!digitalRead(DOWNPIN)) {
+    else if (!digitalRead(DOWNPIN)) { // delete selected character
       morseStr[strSel] = 0;
       strSel--;
       currLetter = morseStr[strSel];
@@ -270,19 +318,103 @@ void strEditor() {
       delay(150); // debounce
     }
     
-    else if (!digitalRead(SELPIN)) {
+    else if (!digitalRead(SELPIN)) { // change selected character
       currLetter++;
+      // rotate a-z, 0-9, then blank
       if (currLetter == 1) {
         currLetter = 'a';
       } else if (currLetter > 'z') {
         currLetter = '0';
       } else if ((currLetter > '9') && (currLetter < 'a')) {
-        currLetter = 0; // back to ' as empty char
+        currLetter = 0; // back to empty char
       }
       morseStr[strSel] = currLetter;
       updateDisplay();
       delay(150); // debounce
     }
   }
+}
+
+/* menu of saved strings to load in morse string from EEPROM */
+void loadMenu() {
+  uint8_t loadCount = EEPROM.read(0); // address 0 keeps track of saved strings count
+
+  // display populated load addresses
+  for (int i=0; i<loadCount; i++) {
+    char temp[MAXSTRLEN + 1];
+    for(int j=0; j<=MAXSTRLEN; j++) {
+      temp[j] = EEPROM.read(1 + i*(MAXSTRLEN + 1) + j);
+    }
+    strcpy(loadedStrs[i], temp);
+  }
+
+  // make last item cancel
+  char temp[MAXSTRLEN + 1] = "[cancel]";
+  strcpy(loadedStrs[loadCount], temp);
+
+  // return to main menu
+  updateMenu(loadedStrs, loadHandler, loadCount + 1, 0);
+}
+
+/* handle selection in load menu */
+void loadHandler(int selection) {
+  if (strcmp(loadedStrs[selection], "[cancel]")) { // check that selected string isn't cancel
+    // set morse string to selected load
+    char *temp = loadedStrs[selection];
+    for (int i=0; i<=MAXSTRLEN; i++) {
+      morseStr[i] = temp[i];
+    }
+  }
+
+  // return to main menu
+  updateMenu(menu, mainHandler, 4, 0);
+}
+
+/* menu of saved strings to overwrite, or empty spots to save to EEPROM */
+void saveMenu() {
+  uint8_t loadCount = EEPROM.read(0); // address 0 keeps track of saved strings count
+
+  // display populated load addresses to overwrite
+  for (int i=0; i<loadCount; i++) {
+    char temp[MAXSTRLEN + 1];
+    for(int j=0; j<=MAXSTRLEN; j++) {
+      temp[j] = EEPROM.read(1 + i*(MAXSTRLEN + 1) + j);
+    }
+    strcpy(loadedStrs[i], temp);
+  }
+
+  // display <empty> for unpopulated addresses
+  for (int i=LOADSIZE; i>loadCount; i--) {
+    char temp[MAXSTRLEN + 1] = "<empty>";
+    strcpy(loadedStrs[i - 1], temp);
+  }
+
+  // make last item cancel
+  char temp[MAXSTRLEN + 1] = "[cancel]";
+  strcpy(loadedStrs[LOADSIZE], temp);
+
+  // return to main menu
+  updateMenu(loadedStrs, saveHandler, LOADSIZE + 1, 0);
+}
+
+/* handle selection in save menu */
+void saveHandler(int selection) {
+  if (strcmp(loadedStrs[selection], "[cancel]")) { // check that selected string isn't cancel
+    // update our count of stored strings, if necessary
+    uint8_t loadCount = EEPROM.read(0); // address 0 keeps track of saved strings count
+    if (selection >= loadCount) { // check if saving to new slot
+      selection = loadCount; // save to next available slot
+      EEPROM.write(0, selection + 1);
+    }
+
+    // store string
+    for (int i=0; i<=MAXSTRLEN; i++) {
+      EEPROM.write(1 + selection*(MAXSTRLEN + 1) + i, morseStr[i]);
+    }
+    EEPROM.commit();
+  }
+
+  // return to main menu
+  updateMenu(menu, mainHandler, 4, 0);
 }
 
