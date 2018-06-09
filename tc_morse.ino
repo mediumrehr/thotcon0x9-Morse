@@ -10,7 +10,7 @@
 #define DOWNPIN   0
 #define SELPIN    4
 #define UPPIN     5
-#define AUDIOPIN  12
+#define AUDIOPIN  4
 #define LEDPIN    13
 
 // first byte is number of notes
@@ -53,7 +53,7 @@ void setup() {
   pinMode(UPPIN, INPUT_PULLUP);
   pinMode(SELPIN, INPUT_PULLUP);
   pinMode(DOWNPIN, INPUT_PULLUP);
-  pinMode(AUDIOPIN, OUTPUT);
+//  pinMode(AUDIOPIN, OUTPUT);
   pinMode(LEDPIN, OUTPUT);
   
   analogWrite(AUDIOPIN, 0);
@@ -177,6 +177,7 @@ void char2Morse(char c) {
 
 /* convert a string to morse code pulses */
 void string2Morse(char* str) {
+  pinMode(AUDIOPIN, OUTPUT);
   uint16_t strLen = strlen(str);
   for (int i=0; i<strLen; i++) {
     char c = str[i];
@@ -185,6 +186,7 @@ void string2Morse(char* str) {
     else
       char2Morse(str[i]);
   }
+  pinMode(AUDIOPIN, INPUT_PULLUP);
 }
 
 /*** Display stuff ***/
