@@ -15,6 +15,8 @@ The morse code repeater started as a badge hack during [Thotcon 0x9](https://tho
 
 The program allows a user to create, load, and save short strings that can be played back in morse code audibly and visually through a simple menu interface in combination with the buttons.
 
+[demo video](https://www.youtube.com/watch?v=NS1loQiafIQ)
+
 ![](images/load.gif)![](images/change.gif)![](images/save.gif)
 
 ### Hardware connections
